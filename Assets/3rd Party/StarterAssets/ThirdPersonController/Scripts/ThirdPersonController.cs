@@ -169,12 +169,16 @@ namespace StarterAssets
             _hasAnimator = TryGetComponent(out _animator);
 
             JumpAndGravity();
-            GroundedCheck();
+            if (_fallTimeoutDelta <= 0.0f)
+            {
+                print(_fallTimeoutDelta);
+                GroundedCheck();
+            }
 
             if (IsClient && IsLocalPlayer)
             {
 
-                MoveServerRpc(_input.move, GameHandler.Instance.GameCamera.transform.eulerAngles.y);
+                MoveServerRpc(_input.move, GameHandler.Instance.GameCamera.transform.eulerAngles.y, _verticalVelocity);
                 InputCheck();
 
             }
@@ -187,8 +191,6 @@ namespace StarterAssets
             {
                 Debug.Log("T'ye basıldı,Teleport Request'i iletildi.");
                 ClientTeleportRequest();
-
-
             }
         }
 
@@ -220,17 +222,12 @@ namespace StarterAssets
         }
 
         [ServerRpc]
-        private void MoveServerRpc(Vector2 inputVector, float cameraYValue)
+        private void MoveServerRpc(Vector2 inputVector, float cameraYValue, float verticalVelocity)
         {
 
-            Move(inputVector, cameraYValue);
-
+            Move(inputVector, cameraYValue, verticalVelocity);
 
         }
-
-
-
-
 
         private void LateUpdate()
         {
@@ -263,7 +260,7 @@ namespace StarterAssets
             // update animator if using character
             if (_hasAnimator)
             {
-                _animator.SetBool(_animIDGrounded, Grounded);
+                GroundedAnimationServerRpc(Grounded);
             }
         }
 
@@ -335,11 +332,9 @@ namespace StarterAssets
         //    }
         //    return thresholdValue;
         //}
-        private void Move(Vector2 move, float cameraYValue)
+        private void Move(Vector2 move, float cameraYValue, float verticalVelocity)
         {
             // set target speed based on move speed, sprint speed and if sprint is pressed
-
-
 
             float targetSpeed = _input.sprint ? SprintSpeed : MoveSpeed;
 
@@ -397,7 +392,8 @@ namespace StarterAssets
 
             // move the player
             _controller.Move(targetDirection.normalized * (_speed * Time.deltaTime) +
-                             new Vector3(0.0f, _verticalVelocity, 0.0f) * Time.deltaTime);
+                             new Vector3(0.0f, verticalVelocity, 0.0f) * Time.deltaTime);
+            print(verticalVelocity);
 
             // update animator if using character
             if (_hasAnimator)
@@ -407,18 +403,44 @@ namespace StarterAssets
             }
         }
 
+        [ServerRpc]
+        private void GroundedAnimationServerRpc(bool enable)
+        {
+            GroundedAnimation(enable);
+        }
+        private void GroundedAnimation(bool enable)
+        {
+            _animator.SetBool(_animIDGrounded, enable);
+        }
+
+        [ServerRpc]
+        private void JumpAnimationServerRpc(bool enable)
+        {
+            JumpAnimation(enable);
+        }
+        private void JumpAnimation(bool enable)
+        {
+            _animator.SetBool(_animIDJump, enable);
+        }
+        [ServerRpc]
+        private void FallAnimationServerRpc(bool enable)
+        {
+            FallAnimation(enable);
+        }
+        private void FallAnimation(bool enable)
+        {
+            print(enable);
+            _animator.SetBool(_animIDJump, enable);
+        }
         private void JumpAndGravity()
         {
             if (Grounded)
             {
-                // reset the fall timeout timer
-                _fallTimeoutDelta = FallTimeout;
-
                 // update animator if using character
                 if (_hasAnimator)
                 {
-                    _animator.SetBool(_animIDJump, false);
-                    _animator.SetBool(_animIDFreeFall, false);
+                    JumpAnimationServerRpc(false);
+                    FallAnimationServerRpc(false);
                 }
 
                 // stop our velocity dropping infinitely when grounded
@@ -430,20 +452,24 @@ namespace StarterAssets
                 // Jump
                 if (_input.jump && _jumpTimeoutDelta <= 0.0f)
                 {
+                    // reset the fall timeout timer
+                    _fallTimeoutDelta = FallTimeout;
+
                     // the square root of H * -2 * G = how much velocity needed to reach desired height
                     _verticalVelocity = Mathf.Sqrt(JumpHeight * -2f * Gravity);
 
+                    Grounded = false;
                     // update animator if using character
                     if (_hasAnimator)
                     {
-                        _animator.SetBool(_animIDJump, true);
+                        JumpAnimationServerRpc(true);
                     }
                 }
 
                 // jump timeout
                 if (_jumpTimeoutDelta >= 0.0f)
                 {
-                    _jumpTimeoutDelta -= Time.deltaTime;
+                    _jumpTimeoutDelta -= Time.fixedDeltaTime;
                 }
             }
             else
@@ -454,14 +480,14 @@ namespace StarterAssets
                 // fall timeout
                 if (_fallTimeoutDelta >= 0.0f)
                 {
-                    _fallTimeoutDelta -= Time.deltaTime;
+                    _fallTimeoutDelta -= Time.fixedDeltaTime;
                 }
                 else
                 {
                     // update animator if using character
                     if (_hasAnimator)
                     {
-                        _animator.SetBool(_animIDFreeFall, true);
+                        FallAnimationServerRpc(true);
                     }
                 }
 
@@ -472,8 +498,10 @@ namespace StarterAssets
             // apply gravity over time if under terminal (multiply by delta time twice to linearly speed up over time)
             if (_verticalVelocity < _terminalVelocity)
             {
-                _verticalVelocity += Gravity * Time.deltaTime;
+                _verticalVelocity += Gravity * Time.fixedDeltaTime;
+                //print(_verticalVelocity);
             }
+
         }
 
         private static float ClampAngle(float lfAngle, float lfMin, float lfMax)
